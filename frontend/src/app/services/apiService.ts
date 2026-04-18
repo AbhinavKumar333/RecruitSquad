@@ -178,6 +178,8 @@ export const api = {
     create: (payload: CreateJobPayload) =>
       authRequest<JobSummary>('/api/jobs', { method: 'POST', body: JSON.stringify(payload) }),
     report: (jobId: string) => authRequest<JobReport>(`/api/jobs/${jobId}/report`),
+    retrySourcing: (jobId: string) =>
+      authRequest<{ job_id: string; message: string }>(`/api/jobs/${jobId}/retry-sourcing`, { method: 'POST' }),
     apply: async (
       jobId: string,
       name: string,

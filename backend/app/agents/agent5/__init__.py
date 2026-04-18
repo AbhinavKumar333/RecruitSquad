@@ -673,8 +673,26 @@ async def compute_candidate_score(state: ScreeningState) -> ScreeningState:
     else:
         resume_jd_score = source_score   # GitHub/LinkedIn profile fit as proxy
 
+    # Field aliases: portal candidates store salary_expectation/current_location/open_to_relocation;
+    # sourced candidates store salary_expected/candidate_location/willing_to_relocate.
+    salary_val = (
+        stored.get("salary_expectation")
+        or stored.get("salary_expected")
+        or 0.0
+    )
+    location_val = str(
+        stored.get("current_location")
+        or stored.get("candidate_location")
+        or stored.get("location")
+        or ""
+    )
+    relocation_val = bool(
+        stored.get("open_to_relocation")
+        or stored.get("willing_to_relocate", False)
+    )
+
     budget_fit = compute_salary_fit(
-        salary_expected=float(stored.get("salary_expected") or 0.0),
+        salary_expected=float(salary_val),
         budget_min=float(job.get("budget_min") or 0.0),
         budget_max=float(job.get("budget_max") or 0.0),
     )
@@ -684,9 +702,9 @@ async def compute_candidate_score(state: ScreeningState) -> ScreeningState:
         exp_max=float(job.get("experience_max") or 99.0),
     )
     location_fit = compute_location_fit(
-        candidate_location=str(stored.get("candidate_location") or ""),
+        candidate_location=location_val,
         job_locations=list(job.get("locations") or []),
-        willing_to_relocate=bool(stored.get("willing_to_relocate", False)),
+        willing_to_relocate=relocation_val,
     )
     is_referred   = bool(stored.get("is_referred", False))
     total_rounds  = int(job.get("total_interview_rounds") or 3)
@@ -943,7 +961,7 @@ async def update_interview_scorecard(state: InterviewRoundState) -> InterviewRou
         oa_score         = float(candidate.get("oa_score") or 0.0)
         behavioral_score = float(candidate.get("behavioral_score") or 0.0)
         budget_fit       = compute_salary_fit(
-            float(candidate.get("salary_expected") or 0.0),
+            float(candidate.get("salary_expectation") or candidate.get("salary_expected") or 0.0),
             float(job.get("budget_min") or 0.0),
             float(job.get("budget_max") or 0.0),
         )
@@ -953,9 +971,9 @@ async def update_interview_scorecard(state: InterviewRoundState) -> InterviewRou
             float(job.get("experience_max") or 99.0),
         )
         location_fit     = compute_location_fit(
-            str(candidate.get("candidate_location") or ""),
+            str(candidate.get("current_location") or candidate.get("candidate_location") or candidate.get("location") or ""),
             list(job.get("locations") or []),
-            bool(candidate.get("willing_to_relocate", False)),
+            bool(candidate.get("open_to_relocation") or candidate.get("willing_to_relocate", False)),
         )
         is_referred  = bool(candidate.get("is_referred", False))
         total_rounds_cfg = int(job.get("total_interview_rounds") or total_rounds or 3)

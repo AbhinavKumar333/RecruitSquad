@@ -1,5 +1,7 @@
 FROM python:3.11-slim
 
+ENV DEBIAN_FRONTEND=noninteractive
+
 WORKDIR /app
 
 # Build deps for packages that compile C extensions (e.g. grpcio)

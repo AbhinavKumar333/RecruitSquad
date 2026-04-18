@@ -76,7 +76,7 @@ deploy_backend() {
     --port 8080 \
     --memory 1Gi \
     --cpu 1 \
-    --min-instances 0 \
+    --min-instances 1 \
     --max-instances 10 \
     --set-env-vars "\
 FIREBASE_PROJECT_ID=recruit-squad-7d8e1,\

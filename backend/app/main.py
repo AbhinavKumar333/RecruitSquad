@@ -1,7 +1,21 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+import logging
 import os
+
+# Configure root logger before anything else so all agent/graph logs reach Cloud Logging.
+# Uvicorn captures stdout/stderr; this makes every logger.info/warning/error visible.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(levelname)s %(name)s %(message)s",
+)
+# Keep noisy third-party loggers quieter
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("google").setLevel(logging.WARNING)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.controllers.chat import router as chat_router

@@ -654,6 +654,17 @@ export const JobCandidates = () => {
     }
   };
 
+  const handleRetrySourcing = async () => {
+    if (!jobId) return;
+    try {
+      await api.jobs.retrySourcing(jobId);
+      toast.success('Sourcing re-triggered. Check back in a few minutes.');
+      load();
+    } catch (err: any) {
+      toast.error(err.message ?? 'Failed to retry sourcing.');
+    }
+  };
+
   const handleSendInvite = async (candidateId: string) => {
     if (!jobId) return;
     // Optimistically mark as sent in local state so the button disappears immediately
@@ -734,7 +745,12 @@ export const JobCandidates = () => {
 
       {/* Tabs */}
       <div className="container mx-auto px-4 py-8">
-        <div className="flex justify-end mb-4">
+        <div className="flex justify-end gap-2 mb-4">
+          {['PENDING', 'SOURCING', 'FAILED'].includes(job.status) && (
+            <Button variant="outline" size="sm" onClick={handleRetrySourcing}>
+              <RefreshCw className="w-4 h-4 mr-2" /> Retry Sourcing
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={load}>
             <RefreshCw className="w-4 h-4 mr-2" /> Refresh
           </Button>

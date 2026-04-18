@@ -98,6 +98,14 @@ async def create_job(payload: JobCreateRequest, background_tasks: BackgroundTask
 async def _run_agent1(state: SourcingState) -> None:
     """Background task: run the full Graph 1 sourcing pipeline."""
     job_id = state["job_id"]
+
+    # Idempotency guard — bail if another instance already started sourcing.
+    # This prevents double-runs from local + cloud hitting the same Firebase DB.
+    current = get_job(job_id) or {}
+    if current.get("status") == "SOURCING":
+        logger.warning("[jobs] Graph1 skipped — job=%s already in SOURCING state", job_id)
+        return
+
     try:
         await run_sourcing_pipeline(
             job_id=job_id,
@@ -110,6 +118,32 @@ async def _run_agent1(state: SourcingState) -> None:
     except Exception as exc:
         logger.error("[jobs] Graph1 pipeline failed job=%s: %s", job_id, exc)
         update_job(job_id, {"status": "FAILED", "error": str(exc)})
+
+
+@router.post("/{job_id}/retry-sourcing")
+async def retry_sourcing(job_id: str, background_tasks: BackgroundTasks,
+                         _=Depends(require_manager)):
+    """Re-trigger Graph 1 sourcing for a job stuck in PENDING/SOURCING/FAILED."""
+    job = get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    update_job(job_id, {"status": "PENDING"})
+    initial_state: SourcingState = {
+        "job_id": job_id,
+        "jd_text": job.get("role_description", ""),
+        "tech_stack": [],
+        "experience_range": (
+            int(job.get("experience_min") or 0),
+            int(job.get("experience_max") or 10),
+        ),
+        "locations": list(job.get("locations") or []),
+        "sourced_candidates": [],
+        "outreach_sent": False,
+        "graph1_complete": False,
+    }
+    background_tasks.add_task(_run_agent1, initial_state)
+    logger.info("[jobs] retry-sourcing triggered job=%s", job_id)
+    return {"job_id": job_id, "message": "Sourcing re-triggered."}
 
 
 @router.get("", response_model=list[JobResponse])

@@ -226,6 +226,10 @@ def build_graph3() -> Any:
     return graph.compile()
 
 
+# Compiled once at import time — safe to reuse across requests (stateless).
+_graph3 = build_graph3()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Public runner
 # ══════════════════════════════════════════════════════════════════════════════
@@ -261,7 +265,7 @@ async def run_coordination_pipeline(
         "email_to_candidate":      None,     # type: ignore[typeddict-item]
     }
 
-    pipeline = build_graph3()
+    pipeline = _graph3
     final    = await pipeline.ainvoke(initial_state)
     logger.info("[Graph3] pipeline done | job=%s shortlisted=%d complete=%s",
                 job_id, len(shortlisted_ids), final.get("graph3_complete"))

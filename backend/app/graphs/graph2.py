@@ -336,6 +336,10 @@ def build_graph2() -> Any:
     return graph.compile()
 
 
+# Compiled once at import time — safe to reuse across requests (stateless).
+_graph2 = build_graph2()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Public runner
 # ══════════════════════════════════════════════════════════════════════════════
@@ -370,7 +374,7 @@ async def run_screening_pipeline(
         "graph2_complete":       False,
     }
 
-    pipeline = build_graph2()
+    pipeline = _graph2
     final    = await pipeline.ainvoke(initial_state)
     logger.info("[Graph2] pipeline done | job=%s candidate=%s shortlisted=%s",
                 job_id, candidate_id, final.get("shortlisted"))

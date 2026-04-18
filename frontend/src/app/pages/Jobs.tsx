@@ -51,13 +51,13 @@ export const Jobs = () => {
   }, []);
 
   const orgList = useMemo(
-    () => Array.from(new Set(jobs.map((j) => j.team).filter(Boolean))).sort() as string[],
+    () => Array.from(new Set(jobs.map((j) => j.org_name).filter(Boolean))).sort() as string[],
     [jobs]
   );
 
-  // Count per org for the badge
+  // Count per employer for the badge
   const orgCounts = useMemo(
-    () => Object.fromEntries(orgList.map((org) => [org, jobs.filter((j) => j.team === org).length])),
+    () => Object.fromEntries(orgList.map((org) => [org, jobs.filter((j) => j.org_name === org).length])),
     [jobs, orgList]
   );
 
@@ -70,12 +70,14 @@ export const Jobs = () => {
     };
     const q = searchTerm.toLowerCase();
 
-    return jobs.filter((j) => {
-      if (q && !j.title.toLowerCase().includes(q) && !j.team?.toLowerCase().includes(q)) return false;
-      if (selectedOrg && j.team !== selectedOrg) return false;
-      if (timeFilter !== 'any' && new Date(j.created_at).getTime() < cutoff[timeFilter]) return false;
-      return true;
-    });
+    return jobs
+      .filter((j) => {
+        if (q && !j.title.toLowerCase().includes(q) && !j.org_name?.toLowerCase().includes(q)) return false;
+        if (selectedOrg && j.org_name !== selectedOrg) return false;
+        if (timeFilter !== 'any' && new Date(j.created_at).getTime() < cutoff[timeFilter]) return false;
+        return true;
+      })
+      .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [jobs, searchTerm, selectedOrg, timeFilter]);
 
   const hasFilters = searchTerm || selectedOrg || timeFilter !== 'any';
@@ -128,7 +130,7 @@ export const Jobs = () => {
         {/* Top alignment row */}
         <div className="flex gap-6 items-center mb-3">
           <div className="w-52 shrink-0 hidden md:flex items-center">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Department</p>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Employer</p>
           </div>
           <div className="flex-1 flex items-center justify-between">
             <div className="flex items-center gap-2 flex-wrap">
@@ -252,8 +254,12 @@ export const Jobs = () => {
                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                         <div className="flex-1 min-w-0">
                           <h2 className="text-lg font-bold text-gray-900 leading-snug">{job.title}</h2>
-                          {job.team && (
-                            <p className="text-xs text-gray-400 mt-0.5">{job.team}</p>
+                          {(job.org_name || job.team) && (
+                            <p className="text-xs text-gray-400 mt-0.5">
+                              <span className="font-semibold text-gray-600">{job.org_name}</span>
+                              {job.org_name && job.team && <span className="mx-1">·</span>}
+                              {job.team}
+                            </p>
                           )}
 
                           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2 text-sm text-gray-500">

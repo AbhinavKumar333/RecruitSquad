@@ -215,6 +215,11 @@ async def _node_notify_manager(state: InterviewRoundState) -> InterviewRoundStat
     return {**state, "report_sent_to_manager": True}
 
 
+# Compiled once at import time — safe to reuse across requests (stateless).
+# Must be after all node functions are defined.
+_graph4 = build_graph4()
+
+
 async def run_interview_round_pipeline(
     job_id: str,
     candidate_id: str,
@@ -240,7 +245,7 @@ async def run_interview_round_pipeline(
         "report_sent_to_manager": False,
     }
 
-    pipeline = build_graph4()
+    pipeline = _graph4
     final_state = await pipeline.ainvoke(initial_state)
 
     # If the final interview round passed, kick off Graph 3 (coordination + market)

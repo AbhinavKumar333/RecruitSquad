@@ -220,3 +220,6 @@ dist/
 
 package-lock.json
 
+
+# Firebase deploy cache
+.firebase/

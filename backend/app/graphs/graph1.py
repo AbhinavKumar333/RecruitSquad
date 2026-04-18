@@ -94,6 +94,10 @@ def build_graph1() -> Any:
     return graph.compile()
 
 
+# Compiled once at import time — safe to reuse across requests (stateless).
+_graph1 = build_graph1()
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Public runner
 # ══════════════════════════════════════════════════════════════════════════════
@@ -120,7 +124,7 @@ async def run_sourcing_pipeline(
         "graph1_complete":    False,
     }
 
-    pipeline = build_graph1()
+    pipeline = _graph1
     final    = await pipeline.ainvoke(initial_state)
     logger.info("[Graph1] pipeline done | job=%s | complete=%s", job_id, final.get("graph1_complete"))
     return final
