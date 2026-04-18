@@ -63,6 +63,9 @@ async def create_job(payload: JobCreateRequest, background_tasks: BackgroundTask
         "candidate_count": 0,
         "org_id": org_id,
         "org_name": org_name,
+        "created_by": manager.get("uid", ""),
+        "manager_email": manager.get("email", ""),
+        "manager_name": manager.get("name", ""),
         "created_at": now,
     }
     update_job(job_id, job_doc)
@@ -560,6 +563,20 @@ async def confirm_schedule(candidate_id: str, payload: dict, background_tasks: B
     job_id = candidate.get("job_id", "")
     job    = get_job(job_id) or {}
 
+    manager_email = job.get("manager_email", "")
+    manager_name  = job.get("manager_name", "") or "Hiring Manager"
+
+    # Fallback: resolve manager from job poster if manager_email is missing
+    if not manager_email and job.get("created_by"):
+        from app.services.firestore_service import get_db
+        user_doc = get_db().collection("users").document(job["created_by"]).get()
+        if user_doc.exists:
+            user_data = user_doc.to_dict() or {}
+            manager_email = user_data.get("email", "")
+            manager_name  = user_data.get("name", "") or manager_name
+            if manager_email:
+                update_job(job_id, {"manager_email": manager_email, "manager_name": manager_name})
+
     # Create Google Calendar event + Meet link (async, runs before DB write)
     meet_url = ""
     try:
@@ -570,6 +587,7 @@ async def confirm_schedule(candidate_id: str, payload: dict, background_tasks: B
             role_title=job.get("title", "the role"),
             slot_iso=slot,
             slot_timezone=timezone,
+            interviewer_email=manager_email,
         )
     except Exception as exc:
         logger.warning("[jobs] Google Calendar event creation failed: %s", exc)
@@ -579,23 +597,40 @@ async def confirm_schedule(candidate_id: str, payload: dict, background_tasks: B
         "interview_timezone":       timezone,
         "interview_slot_confirmed": True,
         "pipeline_stage":           "INTERVIEW_SCHEDULED",
-        **({"zoom_url": meet_url} if meet_url else {}),
+        **({"meet_url": meet_url} if meet_url else {}),
     })
 
     logger.info("[jobs] interview slot confirmed candidate=%s slot=%s meet=%s",
                 candidate_id, slot, meet_url or "N/A")
 
-    # Send confirmation email
-    from app.services.a6_client import send_interview_confirmation
+    # Send confirmation email to candidate
+    from app.services.a6_client import (
+        send_interview_confirmation,
+        send_interview_confirmation_to_manager,
+    )
     background_tasks.add_task(
         send_interview_confirmation,
         candidate_name=candidate.get("name", ""),
         candidate_email=candidate.get("email", ""),
         role_title=job.get("title", "the role"),
         interview_slot=slot,
-        zoom_url=meet_url or candidate.get("zoom_url", ""),
-        interviewer_name="the hiring team",
+        zoom_url=meet_url,
+        interviewer_name=manager_name,
+        manager_email=manager_email,
     )
+
+    # Send confirmation email to manager
+    if manager_email:
+        background_tasks.add_task(
+            send_interview_confirmation_to_manager,
+            manager_name=manager_name,
+            manager_email=manager_email,
+            candidate_name=candidate.get("name", ""),
+            candidate_email=candidate.get("email", ""),
+            role_title=job.get("title", "the role"),
+            interview_slot=slot,
+            meeting_url=meet_url,
+        )
 
     return {"confirmed": True, "slot": slot, "candidate_id": candidate_id,
             "meet_url": meet_url or None}

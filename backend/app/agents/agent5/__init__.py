@@ -918,12 +918,18 @@ async def update_interview_scorecard(state: InterviewRoundState) -> InterviewRou
         new_stage   = "REJECTED"
     elif is_last_round:
         next_action = "MARKET_ANALYSIS"
-        new_stage   = "INTERVIEW_DONE"
+        new_stage   = "OFFERED"
     else:
         next_action = "SCHEDULE_NEXT_ROUND"
         new_stage   = "INTERVIEW_SCHEDULED"
 
-    update_candidate(job_id, candidate_id, {"pipeline_stage": new_stage})
+    candidate_updates: dict = {"pipeline_stage": new_stage}
+    if is_last_round and not is_rejected:
+        candidate_updates["interview_status"] = "COMPLETED"
+    elif is_rejected:
+        candidate_updates["interview_status"] = "REJECTED"
+
+    update_candidate(job_id, candidate_id, candidate_updates)
 
     # ── Recompute composite using v3 formula after each round ────────────────
     job       = get_job(job_id) or {}
@@ -1049,6 +1055,21 @@ async def update_interview_scorecard(state: InterviewRoundState) -> InterviewRou
             "next_round": next_round,
         }
     else:  # MARKET_ANALYSIS
+        email_to_candidate = {
+            "to":      candidate_email,
+            "subject": f"Congratulations! You've been selected - {job_title}",
+            "body": (
+                f"Dear {candidate_name},\n\n"
+                f"We are thrilled to inform you that you have been selected for the "
+                f"{job_title} position after successfully completing all {total_rounds} "
+                f"interview rounds.\n\n"
+                f"Congratulations on the offer! Your hiring manager will reach out soon "
+                f"with more details about next steps, compensation, and onboarding.\n\n"
+                f"We look forward to having you on the team.\n\n"
+                f"Best regards,\nThe Hiring Team"
+            ),
+            "type": "OFFER_CANDIDATE",
+        }
         email_to_manager = {
             "subject": (
                 f"[RecruitSquad] {candidate_name} completed all {total_rounds} "

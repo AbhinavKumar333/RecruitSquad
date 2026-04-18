@@ -151,6 +151,7 @@ async def create_google_calendar_event(
     slot_iso: str,
     slot_timezone: str = "UTC",
     duration_minutes: int = 60,
+    interviewer_email: str = "",
 ) -> str:
     """
     Create a Google Calendar event with a Google Meet link for the interview.
@@ -181,11 +182,17 @@ async def create_google_calendar_event(
             start_dt = datetime.fromisoformat(slot_iso.replace("Z", "+00:00"))
             end_dt   = start_dt + timedelta(minutes=duration_minutes)
 
+            # Generate a stable meeting room from the candidate ID
+            room_id = _uuid_mod.uuid4().hex[:12]
+            jitsi_url = f"https://meet.jit.si/recruitsquad-{room_id}"
+
             event_body = {
                 "summary": f"Interview: {role_title} — {candidate_name}",
                 "description": (
                     f"Interview for the {role_title} position.\n"
-                    f"Candidate: {candidate_name} ({candidate_email})"
+                    f"Candidate: {candidate_name} ({candidate_email})\n"
+                    f"Interviewer: {interviewer_email}\n\n"
+                    f"Join the video call: {jitsi_url}"
                 ),
                 "start": {
                     "dateTime": start_dt.isoformat(),
@@ -195,6 +202,7 @@ async def create_google_calendar_event(
                     "dateTime": end_dt.isoformat(),
                     "timeZone": slot_timezone,
                 },
+                "location": jitsi_url,
                 "reminders": {
                     "useDefault": False,
                     "overrides": [
@@ -204,20 +212,49 @@ async def create_google_calendar_event(
                 },
             }
 
+            # Try with Google Meet conference data first
+            event_body_with_meet = {
+                **event_body,
+                "conferenceData": {
+                    "createRequest": {
+                        "requestId": _uuid_mod.uuid4().hex,
+                        "conferenceSolutionKey": {"type": "hangoutsMeet"},
+                    },
+                },
+            }
+            try:
+                created = (
+                    service.events()
+                    .insert(
+                        calendarId=calendar_id,
+                        body=event_body_with_meet,
+                        conferenceDataVersion=1,
+                        sendUpdates="none",
+                    )
+                    .execute()
+                )
+                # Extract Google Meet link
+                for ep in created.get("conferenceData", {}).get("entryPoints", []):
+                    if ep.get("entryPointType") == "video":
+                        meet_url = ep.get("uri", "")
+                        logger.info("[A3] Calendar event created with Google Meet: %s", meet_url)
+                        return meet_url
+            except Exception:
+                logger.info("[A3] Google Meet not available, creating event with Jitsi link")
+
+            # Fallback: create event without conference data, use Jitsi link
             created = (
                 service.events()
                 .insert(
                     calendarId=calendar_id,
                     body=event_body,
+                    sendUpdates="none",
                 )
                 .execute()
             )
-
-            # Return the Google Calendar event link so the candidate can view details.
-            # (Meet links require Google Workspace; we return the event htmlLink instead.)
-            event_link = created.get("htmlLink", "")
-            logger.info("[A3] Google Calendar event created: %s", event_link)
-            return event_link
+            logger.info("[A3] Calendar event created with Jitsi: %s meet=%s",
+                        created.get("htmlLink", ""), jitsi_url)
+            return jitsi_url
 
         except Exception as exc:
             logger.warning("[A3] Google Calendar API call failed: %s", exc)

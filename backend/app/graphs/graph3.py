@@ -69,15 +69,17 @@ async def _node_market_analyst(state: CoordinationState) -> CoordinationState:
 
 
 async def _node_email_salary_report(state: CoordinationState) -> CoordinationState:
-    """A6: forward A4's salary report email to the hiring manager."""
+    """A6: forward A4's salary report email to the hiring manager (job poster)."""
+    from app.graphs import _resolve_manager_email
     from app.services.a6_client import send_salary_report_to_manager
 
     job_id = state["job_id"]
     logger.info("[Graph3] node: email_salary_report | job=%s", job_id)
 
+    manager_email = _resolve_manager_email(job_id)
     email_payload = state.get("email_to_manager")
     if email_payload:
-        await send_salary_report_to_manager(email_payload)
+        await send_salary_report_to_manager(email_payload, manager_email=manager_email)
     else:
         logger.warning("[Graph3] email_salary_report: no email_to_manager in state — skipping")
 
@@ -156,7 +158,7 @@ async def _node_email_confirmations(state: CoordinationState) -> CoordinationSta
         name       = candidate.get("name", "Candidate")
         email      = candidate.get("email", "")
         cal_link   = candidate.get("calendly_link", "")
-        zoom       = candidate.get("zoom_url", "")
+        meet_url   = candidate.get("meet_url", "")
 
         if not email:
             continue
@@ -166,7 +168,7 @@ async def _node_email_confirmations(state: CoordinationState) -> CoordinationSta
             candidate_email=email,
             role_title=role_title,
             calendly_link=cal_link,
-            zoom_url=zoom,
+            zoom_url=meet_url,
             interviewer_ids=[],
         )
         if ok:

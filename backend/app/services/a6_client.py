@@ -27,6 +27,7 @@ import logging
 import os
 import smtplib
 import ssl
+from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import Any
@@ -77,13 +78,60 @@ def _build_body_text(body: dict) -> str:
     return str(td) or "(no body)"
 
 
-def _smtp_send_sync(to: str, subject: str, text: str) -> None:
+def _build_ics(
+    summary: str,
+    description: str,
+    start_iso: str,
+    duration_minutes: int,
+    organizer_email: str,
+    attendee_emails: list[str],
+    location: str = "",
+) -> str:
+    """Build a minimal RFC 5545 ICS calendar string."""
+    import uuid as _uid
+    from datetime import datetime, timedelta, timezone as _tz
+
+    dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00")).astimezone(_tz.utc)
+    end = dt + timedelta(minutes=duration_minutes)
+    fmt = "%Y%m%dT%H%M%SZ"
+
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//RecruitSquad//EN",
+        "METHOD:REQUEST",
+        "BEGIN:VEVENT",
+        f"UID:{_uid.uuid4()}@recruitsquad",
+        f"DTSTART:{dt.strftime(fmt)}",
+        f"DTEND:{end.strftime(fmt)}",
+        f"SUMMARY:{summary}",
+        f"DESCRIPTION:{description}",
+    ]
+    if location:
+        lines.append(f"LOCATION:{location}")
+    if organizer_email:
+        lines.append(f"ORGANIZER;CN=RecruitSquad:mailto:{organizer_email}")
+    for email in attendee_emails:
+        lines.append(f"ATTENDEE;RSVP=TRUE:mailto:{email}")
+    lines += ["END:VEVENT", "END:VCALENDAR"]
+    return "\r\n".join(lines)
+
+
+def _smtp_send_sync(to: str, subject: str, text: str, ics: str = "") -> None:
     """Blocking SMTP send — runs in a thread executor, not on the event loop."""
-    msg = MIMEMultipart("alternative")
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"]    = _FROM_EMAIL
     msg["To"]      = to
     msg.attach(MIMEText(text, "plain"))
+
+    if ics:
+        from email import encoders
+        ics_part = MIMEBase("text", "calendar", method="REQUEST", charset="UTF-8")
+        ics_part.set_payload(ics.encode("utf-8"))
+        encoders.encode_base64(ics_part)
+        ics_part.add_header("Content-Disposition", "attachment", filename="invite.ics")
+        msg.attach(ics_part)
 
     ctx = ssl.create_default_context()
     with smtplib.SMTP_SSL(_SMTP_HOST, _SMTP_PORT, context=ctx) as server:
@@ -96,11 +144,12 @@ async def _send_via_smtp(body: dict) -> bool:
     to      = body.get("to", "")
     subject = body.get("subject", "(no subject)")
     text    = _build_body_text(body)
+    ics     = body.get("ics", "")
 
     try:
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, _smtp_send_sync, to, subject, text)
-        logger.info("[A6-client] SMTP sent to=%s subject=%s", to, subject)
+        await loop.run_in_executor(None, _smtp_send_sync, to, subject, text, ics)
+        logger.info("[A6-client] SMTP sent to=%s subject=%s ics=%s", to, subject, bool(ics))
         return True
     except Exception as exc:
         logger.error("[A6-client] SMTP send failed to=%s: %s", to, exc)
@@ -285,21 +334,22 @@ async def send_rejection(
     })
 
 
-async def send_salary_report_to_manager(email_payload: dict[str, Any]) -> bool:
+async def send_salary_report_to_manager(email_payload: dict[str, Any], manager_email: str = "") -> bool:
     """
     Graph 3: forward the salary report email that A4 already built.
     email_payload comes directly from CoordinationState['email_to_manager'].
+    manager_email: explicit recipient; falls back to MANAGER_EMAIL env var.
     """
     subject = email_payload.get("subject", "[RecruitSquad] Salary Report")
     body    = email_payload.get("body", "")
-    manager_email = os.environ.get("MANAGER_EMAIL", "")
+    to      = manager_email or os.environ.get("MANAGER_EMAIL", "")
 
-    if not manager_email:
-        logger.warning("[A6-client] MANAGER_EMAIL not set — salary report email skipped")
+    if not to:
+        logger.warning("[A6-client] No manager email — salary report email skipped")
         return False
 
     return await _post("/send-email", {
-        "to": manager_email,
+        "to": to,
         "subject": subject,
         "body_text": body,
     })
@@ -418,8 +468,19 @@ async def send_interview_confirmation(
     interview_slot: str,
     zoom_url: str,
     interviewer_name: str = "the hiring team",
+    manager_email: str = "",
 ) -> bool:
     """Graph 3: final interview confirmation once candidate confirms their slot."""
+    summary = f"Interview: {role_title} — {candidate_name}"
+    ics = _build_ics(
+        summary=summary,
+        description=f"Interview for {role_title}. Meeting link: {zoom_url}" if zoom_url else f"Interview for {role_title}",
+        start_iso=interview_slot,
+        duration_minutes=60,
+        organizer_email=_FROM_EMAIL,
+        attendee_emails=[e for e in [candidate_email, manager_email] if e],
+        location=zoom_url,
+    )
     return await _post("/send-email", {
         "to": candidate_email,
         "subject": f"Interview Confirmed — {role_title}",
@@ -427,9 +488,47 @@ async def send_interview_confirmation(
             f"Hi {candidate_name},\n\n"
             f"Your interview for the {role_title} role has been confirmed.\n\n"
             f"  Date/Time        : {interview_slot}\n"
-            + (f"  Interview Details: {zoom_url}\n" if zoom_url else "")
+            + (f"  Meeting Link     : {zoom_url}\n" if zoom_url else "")
             + f"  Interviewer      : {interviewer_name}\n\n"
-            f"Please be ready 5 minutes before the scheduled time.\n\n"
+            f"Please be ready 5 minutes before the scheduled time.\n"
+            f"An .ics calendar invite is attached — open it to add the event to your calendar.\n\n"
             f"Best regards,\nThe Hiring Team"
         ),
+        "ics": ics,
+    })
+
+
+async def send_interview_confirmation_to_manager(
+    manager_name: str,
+    manager_email: str,
+    candidate_name: str,
+    candidate_email: str,
+    role_title: str,
+    interview_slot: str,
+    meeting_url: str = "",
+) -> bool:
+    """Notify the hiring manager that a candidate has confirmed their interview slot."""
+    summary = f"Interview: {role_title} — {candidate_name}"
+    ics = _build_ics(
+        summary=summary,
+        description=f"Interview with {candidate_name} ({candidate_email}). Meeting link: {meeting_url}" if meeting_url else f"Interview with {candidate_name}",
+        start_iso=interview_slot,
+        duration_minutes=60,
+        organizer_email=_FROM_EMAIL,
+        attendee_emails=[e for e in [manager_email, candidate_email] if e],
+        location=meeting_url,
+    )
+    return await _post("/send-email", {
+        "to": manager_email,
+        "subject": f"Interview Scheduled — {candidate_name} for {role_title}",
+        "body_text": (
+            f"Hi {manager_name},\n\n"
+            f"{candidate_name} ({candidate_email}) has confirmed an interview slot "
+            f"for the {role_title} position.\n\n"
+            f"  Date/Time    : {interview_slot}\n"
+            + (f"  Meeting Link : {meeting_url}\n" if meeting_url else "")
+            + f"\nAn .ics calendar invite is attached — open it to add the event to your calendar.\n\n"
+            f"Best regards,\nRecruitSquad"
+        ),
+        "ics": ics,
     })

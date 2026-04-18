@@ -15,6 +15,37 @@ from app.models.states import InterviewRoundState
 logger = logging.getLogger(__name__)
 
 
+def _resolve_manager_email(job_id: str) -> str:
+    """
+    Resolve the hiring manager's email for a job.
+    Priority: job.manager_email → job poster's user doc email → MANAGER_EMAIL env.
+    """
+    import os
+    from app.services.firestore_service import get_db, get_job
+
+    job = get_job(job_id) or {} if job_id else {}
+
+    # 1. Explicit manager_email on the job document
+    email = job.get("manager_email", "")
+    if email:
+        return email
+
+    # 2. Look up the job poster's email from the users collection
+    created_by = job.get("created_by", "")
+    if created_by:
+        try:
+            doc = get_db().collection("users").document(created_by).get()
+            if doc.exists:
+                email = (doc.to_dict() or {}).get("email", "")
+                if email:
+                    return email
+        except Exception:
+            pass
+
+    # 3. Fallback to env var
+    return os.environ.get("MANAGER_EMAIL", "")
+
+
 class _FallbackGraph4:
     async def ainvoke(self, state: InterviewRoundState) -> InterviewRoundState:
         state = await update_interview_scorecard(state)
@@ -71,11 +102,13 @@ def _route_after_scorecard(state: InterviewRoundState) -> str:
 
 async def _node_schedule_next(state: InterviewRoundState) -> InterviewRoundState:
     """
-    Create Calendly + Zoom links for the next interview round via A3, then
-    append the booking URL to the candidate-facing email payload in state so
-    _node_notify_both can dispatch a single complete email.
+    Create a Calendly scheduling link + Jitsi meeting room for the next
+    interview round, then append both URLs to the candidate-facing email
+    payload so _node_notify_both can dispatch a single complete email.
     """
-    from app.agents.agent3 import create_calendly_link, create_zoom_meeting
+    import uuid as _uuid_mod
+
+    from app.agents.agent3 import create_calendly_link
     from app.services.firestore_service import get_candidate, get_job, update_candidate
 
     job_id       = state.get("job_id", "")
@@ -95,16 +128,17 @@ async def _node_schedule_next(state: InterviewRoundState) -> InterviewRoundState
         candidate_id=candidate_id,
         role_title=role_title,
     )
-    zoom_url = await create_zoom_meeting(
-        candidate_name=candidate_name,
-        role_title=role_title,
-    )
+
+    room_id = _uuid_mod.uuid4().hex[:12]
+    meet_url = f"https://meet.jit.si/recruitsquad-{room_id}"
 
     update_candidate(job_id, candidate_id, {
-        "calendly_link":    calendly_link,
-        "zoom_url":         zoom_url,
-        "pipeline_stage":   "INTERVIEW_SCHEDULED",
-        "interview_status": "PENDING",
+        "calendly_link":            calendly_link,
+        "meet_url":                 meet_url,
+        "pipeline_stage":           "INTERVIEW_SCHEDULED",
+        "interview_status":         "PENDING",
+        "interview_slot_confirmed": False,
+        "interview_slot":           None,
     })
 
     # Append the actual links to the pre-built candidate email payload
@@ -113,20 +147,19 @@ async def _node_schedule_next(state: InterviewRoundState) -> InterviewRoundState
         suffix = (
             f"\n\nBook your Round {next_round} slot:\n"
             f"  Schedule: {calendly_link}\n"
-            f"  Zoom:     {zoom_url}\n"
+            f"  Meeting:  {meet_url}\n"
         )
         email["body"] = email.get("body", "") + suffix
 
-    logger.info("Graph4 schedule_next done | calendly=%s zoom=%s", calendly_link, zoom_url)
+    logger.info("Graph4 schedule_next done | calendly=%s meet=%s", calendly_link, meet_url)
     return {**state, "email_to_candidate": email or state.get("email_to_candidate")}
 
 
 async def _node_notify_both(state: InterviewRoundState) -> InterviewRoundState:
     """Dispatch candidate + manager emails built by A5's update_interview_scorecard."""
-    import os
     from app.services.a6_client import send_generic_email
 
-    manager_email = os.environ.get("MANAGER_EMAIL", "")
+    manager_email = _resolve_manager_email(state.get("job_id", ""))
 
     email_c = state.get("email_to_candidate")
     email_m = state.get("email_to_manager")
@@ -144,7 +177,7 @@ async def _node_notify_both(state: InterviewRoundState) -> InterviewRoundState:
         body    = str(email_m.get("body", ""))
         if subject:
             await send_generic_email(to=manager_email, subject=subject, body=body)
-            logger.info("Graph4 notify_both: manager email sent subject=%r", subject)
+            logger.info("Graph4 notify_both: manager email sent to=%s subject=%r", manager_email, subject)
 
     logger.info("Graph4 notify_both done | job=%s candidate=%s action=%s",
                 state.get("job_id"), state.get("candidate_id"), state.get("next_action"))
@@ -152,21 +185,30 @@ async def _node_notify_both(state: InterviewRoundState) -> InterviewRoundState:
 
 
 async def _node_notify_manager(state: InterviewRoundState) -> InterviewRoundState:
-    """Dispatch manager-only email (all interview rounds passed — market analysis triggered)."""
-    import os
+    """Dispatch manager email (+ candidate offer email if present)."""
     from app.services.a6_client import send_generic_email
 
-    manager_email = os.environ.get("MANAGER_EMAIL", "")
+    manager_email = _resolve_manager_email(state.get("job_id", ""))
     email_m       = state.get("email_to_manager")
+    email_c       = state.get("email_to_candidate")
+
+    # Send candidate offer/congratulations email if present
+    if email_c:
+        to      = str(email_c.get("to", ""))
+        subject = str(email_c.get("subject", ""))
+        body    = str(email_c.get("body", ""))
+        if to and subject:
+            await send_generic_email(to=to, subject=subject, body=body)
+            logger.info("Graph4 notify_manager: candidate email sent to=%s subject=%r", to, subject)
 
     if email_m and manager_email:
         subject = str(email_m.get("subject", ""))
         body    = str(email_m.get("body", ""))
         if subject:
             await send_generic_email(to=manager_email, subject=subject, body=body)
-            logger.info("Graph4 notify_manager: email sent subject=%r", subject)
+            logger.info("Graph4 notify_manager: manager email sent to=%s subject=%r", manager_email, subject)
     elif not manager_email:
-        logger.warning("Graph4 notify_manager: MANAGER_EMAIL not set — skipping")
+        logger.warning("Graph4 notify_manager: no manager email found for job=%s", state.get("job_id"))
 
     logger.info("Graph4 notify_manager done | job=%s candidate=%s",
                 state.get("job_id"), state.get("candidate_id"))

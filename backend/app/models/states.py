@@ -29,7 +29,7 @@ class ScreeningState(TypedDict):
     rank: int
     shortlisted: bool
     calendly_link: str
-    zoom_url: str
+    meet_url: str
     invite_sent: bool
     invite_status: str
     reschedule_count: int
@@ -39,7 +39,7 @@ class ScreeningState(TypedDict):
 class InterviewSlot(TypedDict):
     candidate_id: str
     slot: datetime
-    zoom_url: str
+    meet_url: str
     calendly_event_id: str
 
 

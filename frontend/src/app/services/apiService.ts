@@ -55,6 +55,7 @@ export interface JobDetail extends JobSummary {
   experience_min: number;
   experience_max: number;
   team: string;
+  total_interview_rounds: number;
   salary_report?: SalaryReport;
   audit?: AuditResult;
 }

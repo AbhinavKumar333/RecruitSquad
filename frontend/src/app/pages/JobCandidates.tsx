@@ -285,7 +285,7 @@ const ScoreInput = ({
 
 // ── Interview Feedback Tab ────────────────────────────────────────────────────
 
-const FeedbackTab = ({ jobId, candidates, jobTotalRounds }: { jobId: string; candidates: Candidate[]; jobTotalRounds: number }) => {
+const FeedbackTab = ({ jobId, candidates, jobTotalRounds, onRefresh }: { jobId: string; candidates: Candidate[]; jobTotalRounds: number; onRefresh?: () => void }) => {
   const eligible = candidates.filter((c) =>
     ['SHORTLISTED', 'INTERVIEW_SCHEDULED', 'INTERVIEW_DONE'].includes(c.pipeline_stage)
   );
@@ -350,6 +350,7 @@ const FeedbackTab = ({ jobId, candidates, jobTotalRounds }: { jobId: string; can
       });
       prevSelectedId.current = '';
       setSelectedId('');
+      onRefresh?.();
     } catch (err: any) {
       toast.error(err.message ?? 'Failed to submit feedback.');
     } finally {
@@ -764,7 +765,7 @@ export const JobCandidates = () => {
           </TabsContent>
 
           <TabsContent value="feedback">
-            <FeedbackTab jobId={jobId!} candidates={candidates} jobTotalRounds={job?.total_interview_rounds ?? 1} />
+            <FeedbackTab jobId={jobId!} candidates={candidates} jobTotalRounds={job?.total_interview_rounds ?? 1} onRefresh={load} />
           </TabsContent>
 
           <TabsContent value="report">

@@ -123,20 +123,24 @@ async def _node_coordinator(state: ScreeningState) -> ScreeningState:
         role_title=role_title,
     )
 
+    import uuid as _uuid_mod
+    room_id = _uuid_mod.uuid4().hex[:12]
+    meet_url = f"https://meet.jit.si/recruitsquad-{room_id}"
+
     update_candidate(job_id, candidate_id, {
         "calendly_link":    calendly_link,
-        "zoom_url":         "",
+        "meet_url":         meet_url,
         "pipeline_stage":   "INTERVIEW_SCHEDULED",
         "interview_status": "PENDING",
     })
 
-    logger.info("[Graph2] coordinator done | candidate=%s schedule_link=%s",
-                candidate_id, calendly_link)
+    logger.info("[Graph2] coordinator done | candidate=%s schedule_link=%s meet=%s",
+                candidate_id, calendly_link, meet_url)
 
     return {
         **state,
         "calendly_link":    calendly_link,
-        "zoom_url":         "",
+        "meet_url":         meet_url,
         "invite_status":    "PENDING",
         "reschedule_count": state.get("reschedule_count", 0) + 1,
     }
@@ -163,7 +167,7 @@ async def _node_email_invite(state: ScreeningState) -> ScreeningState:
             candidate_email=email,
             role_title=role_title,
             calendly_link=state.get("calendly_link", ""),
-            zoom_url=state.get("zoom_url", ""),
+            zoom_url=state.get("meet_url", ""),
             interviewer_ids=[],   # A3 will populate when implemented
         )
 
@@ -359,7 +363,7 @@ async def run_screening_pipeline(
         "rank":                  0,
         "shortlisted":           False,
         "calendly_link":         "",
-        "zoom_url":              "",
+        "meet_url":              "",
         "invite_sent":           False,
         "invite_status":         "PENDING",
         "reschedule_count":      0,
